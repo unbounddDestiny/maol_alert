@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ALERT</title>
+    <style>
+        body {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #1a1a2e;
+            font-family: Arial, sans-serif;
+        }
+        .alert-button {
+            width: 300px;
+            height: 300px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #ff4444, #cc0000);
+            border: 8px solid #ff6666;
+            color: white;
+            font-size: 48px;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 0 30px rgba(255, 0, 0, 0.6);
+        }
+        .alert-button:active {
+            transform: scale(0.95);
+        }
+        #status {
+            margin-top: 20px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div style="text-align: center;">
+        <button class="alert-button" id="alertBtn">ALERT</button>
+        <div id="status"></div>
+    </div>
+    <script>
+        document.getElementById('alertBtn').addEventListener('click', async () => {
+            const status = document.getElementById('status');
+            status.textContent = 'Sending...';
+            
+            try {
+                // Call ntfy.sh directly from browser
+                const res = await fetch('https://ntfy.sh/maol_alert', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain' },
+                    body: 'WAKE UP'
+                });
+                
+                status.textContent = res.ok ? '✓ Sent!' : '✗ Failed: ' + res.status;
+            } catch (err) {
+                status.textContent = 'Error: ' + err.message;
+            }
+        });
+    </script>
+</body>
+</html>
