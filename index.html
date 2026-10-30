@@ -53,14 +53,13 @@
     </div>
 
     <script>
-        // --- CONFIGURATION ---
         const SUPABASE_URL = 'https://vvjreqxflpogiyyksoeb.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ2anJlcXhmbHBvZ2l5eWtzb2ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNDM4NDAsImV4cCI6MjEwODkxOTg0MH0.yvLdhuL2qyQwV5pGMTbNNQVSl1yzihAT2oMzJ2PEf8M';
         
         const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         const alertBtn = document.getElementById('alertBtn');
         const status = document.getElementById('status');
-        const COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 hours in milliseconds
+        const COOLDOWN_MS = 12 * 60 * 60 * 1000;
 
         async function checkGlobalCooldown() {
             try {
@@ -83,7 +82,7 @@
                 return { allowed: true };
             } catch (err) {
                 console.error('Cooldown check failed:', err);
-                return { allowed: true }; // Allow on DB error to prevent lockout
+                return { allowed: true };
             }
         }
 
@@ -103,7 +102,6 @@
             return state.allowed;
         }
 
-        // Update timer every minute
         setInterval(updateButtonState, 60000);
         updateButtonState();
 
@@ -122,23 +120,30 @@
                 });
                 if (!ntfyRes.ok) throw new Error(`ntfy.sh failed: ${ntfyRes.status}`);
 
-                // 2. Update DB timestamp (NO .select() to avoid RLS validation issues)
-                const { error } = await sbClient
+                // 2. Update DB WITH .select() - Now works perfectly with WITH CHECK (true)
+                const { data, error } = await sbClient
                     .from('config')
                     .update({ last_alert_at: new Date().toISOString() })
-                    .eq('id', 1);
+                    .eq('id', 1)
+                    .select();
 
-                if (error) throw new Error(`DB update failed: ${error.message}`);
+                if (error) {
+                    await updateButtonState();
+                    throw new Error(`DB update failed: ${error.message}`);
+                }
+                
+                if (!data || data.length === 0) {
+                    throw new Error('Update returned no data');
+                }
 
                 status.textContent = '✓ Global Alert Sent!';
                 status.style.color = '#66ff66';
-                updateButtonState();
+                await updateButtonState(); // Immediately shows 12h countdown
 
             } catch (err) {
                 console.error('Alert failed:', err);
                 status.textContent = `✗ Error: ${err.message}`;
                 status.style.color = '#ff6666';
-                updateButtonState();
             }
         });
     </script>
