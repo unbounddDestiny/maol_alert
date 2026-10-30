@@ -56,15 +56,13 @@
 
         async function checkGlobalCooldown() {
             try {
-                const { error } = await sbClient
+                const { data, error } = await sbClient
                     .from('config')
-                    .update({ last_alert_at: new Date().toISOString() })
-                    .eq('id', 1);
+                    .select('last_alert_at')
+                    .eq('id', 1)
+                    .single();
 
-                if (error) {
-                    console.error('Supabase Update Error:', error);
-                    throw new Error('Cooldown active or DB error: ' + error.message);
-                }
+                if (error) throw error;
 
                 if (data && data.last_alert_at) {
                     const lastSent = new Date(data.last_alert_at).getTime();
