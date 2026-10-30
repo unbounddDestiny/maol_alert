@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>GLOBAL ALERT SYSTEM</title>
+    <!-- Import Supabase JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         body {
@@ -47,13 +48,15 @@
         const SUPABASE_URL = 'https://vvjreqxflpogiyyksoeb.supabase.co';
         const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ2anJlcXhmbHBvZ2l5eWtzb2ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNDM4NDAsImV4cCI6MjEwODkxOTg0MH0.yvLdhuL2qyQwV5pGMTbNNQVSl1yzihAT2oMzJ2PEf8M';
         
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        // Initialize Supabase using the global 'supabase' object from the CDN
+        const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
         const alertBtn = document.getElementById('alertBtn');
         const status = document.getElementById('status');
 
         async function checkGlobalCooldown() {
             try {
-                const { data, error } = await supabase
+                const { data, error } = await sbClient
                     .from('config')
                     .select('last_alert_at')
                     .eq('id', 1)
@@ -115,13 +118,12 @@
                 if (!ntfyRes.ok) throw new Error('ntfy failed');
 
                 // 2. Update database (RLS will block this if < 12 hours)
-                const { error } = await supabase
+                const { error } = await sbClient
                     .from('config')
                     .update({ last_alert_at: new Date().toISOString() })
                     .eq('id', 1);
 
                 if (error) {
-                    // If RLS blocks it, the UI might have been slightly out of sync
                     throw new Error('Cooldown active (Database blocked update)');
                 }
 
@@ -132,7 +134,7 @@
             } catch (err) {
                 status.textContent = '✗ Error: ' + err.message;
                 status.style.color = '#ff6666';
-                updateButtonState(); // Refresh timer in case of failure
+                updateButtonState();
             }
         });
     </script>
