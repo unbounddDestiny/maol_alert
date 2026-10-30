@@ -117,14 +117,21 @@
 
                 if (!ntfyRes.ok) throw new Error('ntfy failed');
 
-                // 2. Update database (RLS will block this if < 12 hours)
-                const { error } = await sbClient
+                // 2. Update database - Explicitly force UPDATE operation
+                const { data, error } = await sbClient
                     .from('config')
                     .update({ last_alert_at: new Date().toISOString() })
-                    .eq('id', 1);
+                    .eq('id', 1)
+                    .select(); // Forces return of updated row, confirms it was an UPDATE not INSERT
 
                 if (error) {
-                    throw new Error('Cooldown active (Database blocked update)');
+                    console.error('Supabase Update Error:', error);
+                    throw new Error('Cooldown active or DB error: ' + error.message);
+                }
+                
+                // Verify we actually got a row back (confirms UPDATE worked)
+                if (!data || data.length === 0) {
+                    throw new Error('Update returned no data - row may not exist');
                 }
 
                 status.textContent = '✓ Global Alert Sent!';
@@ -132,6 +139,7 @@
                 updateButtonState();
 
             } catch (err) {
+                console.error('Alert Error:', err);
                 status.textContent = '✗ Error: ' + err.message;
                 status.style.color = '#ff6666';
                 updateButtonState();
