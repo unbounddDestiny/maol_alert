@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>ALERT</title>
+    <title>GLOBAL ALERT SYSTEM</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         body {
             min-height: 100vh;
@@ -9,7 +10,7 @@
             justify-content: center;
             align-items: center;
             background: #1a1a2e;
-            font-family: Arial, sans-serif;
+            font-family: 'Arial Black', Arial, sans-serif;
         }
         .alert-button {
             width: 300px;
@@ -22,37 +23,116 @@
             font-weight: bold;
             cursor: pointer;
             box-shadow: 0 0 30px rgba(255, 0, 0, 0.6);
+            transition: all 0.2s;
         }
-        .alert-button:active {
-            transform: scale(0.95);
+        .alert-button:active { transform: scale(0.95); }
+        .alert-button.disabled {
+            background: #555;
+            border-color: #777;
+            box-shadow: none;
+            cursor: not-allowed;
+            opacity: 0.5;
         }
-        #status {
-            margin-top: 20px;
-            color: white;
-        }
+        #status { margin-top: 20px; color: white; font-size: 18px; }
     </style>
 </head>
 <body>
     <div style="text-align: center;">
         <button class="alert-button" id="alertBtn">ALERT</button>
-        <div id="status"></div>
+        <div id="status">Loading...</div>
     </div>
+
     <script>
-        document.getElementById('alertBtn').addEventListener('click', async () => {
-            const status = document.getElementById('status');
-            status.textContent = 'Sending...';
+        // --- CONFIGURATION ---
+        const SUPABASE_URL = 'https://vvjreqxflpogiyyksoeb.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ2anJlcXhmbHBvZ2l5eWtzb2ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNDM4NDAsImV4cCI6MjEwODkxOTg0MH0.yvLdhuL2qyQwV5pGMTbNNQVSl1yzihAT2oMzJ2PEf8M';
+        
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const alertBtn = document.getElementById('alertBtn');
+        const status = document.getElementById('status');
+
+        async function checkGlobalCooldown() {
+            try {
+                const { data, error } = await supabase
+                    .from('config')
+                    .select('last_alert_at')
+                    .eq('id', 1)
+                    .single();
+
+                if (error) throw error;
+
+                if (data && data.last_alert_at) {
+                    const lastSent = new Date(data.last_alert_at).getTime();
+                    const now = Date.now();
+                    const cooldownMs = 12 * 60 * 60 * 1000; // 12 Hours
+                    
+                    if (now - lastSent < cooldownMs) {
+                        const remainingMs = cooldownMs - (now - lastSent);
+                        const remainingMinutes = Math.ceil(remainingMs / (1000 * 60));
+                        return { allowed: false, remainingMinutes };
+                    }
+                }
+                return { allowed: true };
+            } catch (err) {
+                console.error(err);
+                return { allowed: true }; 
+            }
+        }
+
+        async function updateButtonState() {
+            const state = await checkGlobalCooldown();
+            if (!state.allowed) {
+                alertBtn.classList.add('disabled');
+                alertBtn.textContent = `${Math.floor(state.remainingMinutes / 60)}h ${state.remainingMinutes % 60}m`;
+                status.textContent = `Global Cooldown: Wait ${state.remainingMinutes} mins`;
+                status.style.color = '#ff6666';
+            } else {
+                alertBtn.classList.remove('disabled');
+                alertBtn.textContent = 'ALERT';
+                status.textContent = 'Ready to send';
+                status.style.color = '#66ff66';
+            }
+            return state.allowed;
+        }
+
+        setInterval(updateButtonState, 60000);
+        updateButtonState();
+
+        alertBtn.addEventListener('click', async () => {
+            const isAllowed = await updateButtonState();
+            if (!isAllowed) return;
+
+            status.textContent = 'Sending WAKE UP...';
             
             try {
-                // Call ntfy.sh directly from browser
-                const res = await fetch('https://ntfy.sh/maol_alert', {
+                // 1. Send to ntfy.sh
+                const ntfyRes = await fetch('https://ntfy.sh/maol_alert', {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
                     body: 'WAKE UP'
                 });
-                
-                status.textContent = res.ok ? '✓ Sent!' : '✗ Failed: ' + res.status;
+
+                if (!ntfyRes.ok) throw new Error('ntfy failed');
+
+                // 2. Update database (RLS will block this if < 12 hours)
+                const { error } = await supabase
+                    .from('config')
+                    .update({ last_alert_at: new Date().toISOString() })
+                    .eq('id', 1);
+
+                if (error) {
+                    // If RLS blocks it, the UI might have been slightly out of sync
+                    throw new Error('Cooldown active (Database blocked update)');
+                }
+
+                status.textContent = '✓ Global Alert Sent!';
+                status.style.color = '#66ff66';
+                updateButtonState();
+
             } catch (err) {
-                status.textContent = 'Error: ' + err.message;
+                status.textContent = '✗ Error: ' + err.message;
+                status.style.color = '#ff6666';
+                updateButtonState(); // Refresh timer in case of failure
             }
         });
     </script>
