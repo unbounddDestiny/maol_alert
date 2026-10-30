@@ -4,24 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GLOBAL ALERT SYSTEM</title>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: #1a1a2e;
-            font-family: 'Arial Black', Arial, sans-serif;
+            min-height: 100vh; display: flex; justify-content: center; align-items: center;
+            background: #1a1a2e; font-family: 'Arial Black', Arial, sans-serif;
         }
         .container { text-align: center; }
         .alert-button {
             width: 300px; height: 300px; border-radius: 50%;
             background: radial-gradient(circle at 30% 30%, #ff4444, #cc0000);
             border: 8px solid #ff6666; color: white; font-size: 48px;
-            font-weight: bold; cursor: pointer;
-            box-shadow: 0 0 30px rgba(255, 0, 0, 0.6);
+            font-weight: bold; cursor: pointer; box-shadow: 0 0 30px rgba(255, 0, 0, 0.6);
             transition: all 0.2s ease; user-select: none;
         }
         .alert-button:active:not(.disabled) { transform: scale(0.95); }
@@ -39,46 +33,35 @@
     </div>
 
     <script>
-        const SUPABASE_URL = 'https://vvjreqxflpogiyyksoeb.supabase.co';
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ2anJlcXhmbHBvZ2l5eWtzb2ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNDM4NDAsImV4cCI6MjEwODkxOTg0MH0.yvLdhuL2qyQwV5pGMTbNNQVSl1yzihAT2oMzJ2PEf8M';
+        // ONLY CONFIG: Your Cloudflare Worker URL
+        const WORKER_URL = 'https://YOUR-WORKER-NAME.YOUR-SUBDOMAIN.workers.dev';
         
-        const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
         const alertBtn = document.getElementById('alertBtn');
         const status = document.getElementById('status');
         const COOLDOWN_MS = 12 * 60 * 60 * 1000;
+        
+        // Track last alert time locally (synced with server after each send)
+        let lastAlertTime = null;
 
-        async function checkGlobalCooldown() {
-            try {
-                const { data, error } = await sbClient
-                    .from('config')
-                    .select('last_alert_at')
-                    .eq('id', 1)
-                    .single();
-
-                if (error || !data?.last_alert_at) return { allowed: true };
-
-                const lastSent = new Date(data.last_alert_at).getTime();
-                const remaining = COOLDOWN_MS - (Date.now() - lastSent);
-                
-                if (remaining > 0) {
-                    return { 
-                        allowed: false, 
-                        remainingMinutes: Math.ceil(remaining / 60000) 
-                    };
-                }
-                return { allowed: true };
-            } catch (err) {
-                console.error('Cooldown check failed:', err);
-                return { allowed: true };
+        function checkLocalCooldown() {
+            if (!lastAlertTime) return { allowed: true };
+            
+            const remaining = COOLDOWN_MS - (Date.now() - lastAlertTime);
+            if (remaining > 0) {
+                return { 
+                    allowed: false, 
+                    remainingMinutes: Math.ceil(remaining / 60000) 
+                };
             }
+            return { allowed: true };
         }
 
-        async function updateButtonState() {
-            const state = await checkGlobalCooldown();
+        function updateButtonState() {
+            const state = checkLocalCooldown();
             if (!state.allowed) {
                 alertBtn.classList.add('disabled');
                 alertBtn.textContent = `${Math.floor(state.remainingMinutes / 60)}h ${state.remainingMinutes % 60}m`;
-                status.textContent = `Global Cooldown: Wait ${state.remainingMinutes} mins`;
+                status.textContent = `Cooldown: Wait ${state.remainingMinutes} mins`;
                 status.style.color = '#ff6666';
             } else {
                 alertBtn.classList.remove('disabled');
@@ -89,45 +72,50 @@
             return state.allowed;
         }
 
+        // Initialize from localStorage if available
+        const storedTime = localStorage.getItem('lastAlertTime');
+        if (storedTime) lastAlertTime = parseInt(storedTime);
+        
         setInterval(updateButtonState, 60000);
         updateButtonState();
 
         alertBtn.addEventListener('click', async () => {
-            const isAllowed = await updateButtonState();
-            if (!isAllowed) return;
+            if (!updateButtonState()) return;
 
-            status.textContent = 'Sending WAKE UP...';
+            status.textContent = 'Sending email alert...';
             
             try {
-                // 1. Send to ntfy.sh
-                const ntfyRes = await fetch('https://ntfy.sh/maol_alert', {
+                // Step 1: Send email via Worker
+                const emailRes = await fetch(WORKER_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'text/plain' },
-                    body: 'WAKE UP'
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'send_email' })
                 });
-                if (!ntfyRes.ok) throw new Error(`ntfy.sh failed: ${ntfyRes.status}`);
 
-                // 2. Update DB - WITH CHECK (true) makes .select() safe here
-                const { data, error } = await sbClient
-                    .from('config')
-                    .update({ last_alert_at: new Date().toISOString() })
-                    .eq('id', 1)
-                    .select();
+                const emailData = await emailRes.json();
+                if (!emailRes.ok) throw new Error(emailData.error || 'Email failed');
 
-                if (error) {
-                    await updateButtonState();
-                    throw new Error(`DB update failed: ${error.message}`);
-                }
+                // Step 2: Update DB timestamp via Worker (bypasses all RLS)
+                const dbRes = await fetch(WORKER_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'update_timestamp' })
+                });
+
+                const dbData = await dbRes.json();
+                if (!dbRes.ok) throw new Error(dbData.error || 'DB update failed');
+
+                // Step 3: Update local cooldown state
+                lastAlertTime = Date.now();
+                localStorage.setItem('lastAlertTime', lastAlertTime.toString());
                 
-                if (!data?.length) throw new Error('Update returned no data');
-
-                status.textContent = '✓ Global Alert Sent!';
+                status.textContent = '✓ Email Alert Sent!';
                 status.style.color = '#66ff66';
-                await updateButtonState();
+                updateButtonState();
 
             } catch (err) {
                 console.error('Alert failed:', err);
-                status.textContent = `✗ Error: ${err.message}`;
+                status.textContent = ` Error: ${err.message}`;
                 status.style.color = '#ff6666';
             }
         });
