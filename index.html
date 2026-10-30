@@ -17,33 +17,19 @@
         }
         .container { text-align: center; }
         .alert-button {
-            width: 300px;
-            height: 300px;
-            border-radius: 50%;
+            width: 300px; height: 300px; border-radius: 50%;
             background: radial-gradient(circle at 30% 30%, #ff4444, #cc0000);
-            border: 8px solid #ff6666;
-            color: white;
-            font-size: 48px;
-            font-weight: bold;
-            cursor: pointer;
+            border: 8px solid #ff6666; color: white; font-size: 48px;
+            font-weight: bold; cursor: pointer;
             box-shadow: 0 0 30px rgba(255, 0, 0, 0.6);
-            transition: all 0.2s ease;
-            user-select: none;
+            transition: all 0.2s ease; user-select: none;
         }
         .alert-button:active:not(.disabled) { transform: scale(0.95); }
         .alert-button.disabled {
-            background: #555;
-            border-color: #777;
-            box-shadow: none;
-            cursor: not-allowed;
-            opacity: 0.5;
+            background: #555; border-color: #777; box-shadow: none;
+            cursor: not-allowed; opacity: 0.5;
         }
-        #status {
-            margin-top: 20px;
-            color: white;
-            font-size: 18px;
-            min-height: 24px;
-        }
+        #status { margin-top: 20px; color: white; font-size: 18px; min-height: 24px; }
     </style>
 </head>
 <body>
@@ -63,21 +49,22 @@
 
         async function checkGlobalCooldown() {
             try {
-                // USING (true) guarantees this always returns a row
                 const { data, error } = await sbClient
                     .from('config')
                     .select('last_alert_at')
                     .eq('id', 1)
                     .single();
 
-                if (error || !data || !data.last_alert_at) return { allowed: true };
+                if (error || !data?.last_alert_at) return { allowed: true };
 
                 const lastSent = new Date(data.last_alert_at).getTime();
-                const now = Date.now();
+                const remaining = COOLDOWN_MS - (Date.now() - lastSent);
                 
-                if (now - lastSent < COOLDOWN_MS) {
-                    const remainingMinutes = Math.ceil((COOLDOWN_MS - (now - lastSent)) / (1000 * 60));
-                    return { allowed: false, remainingMinutes };
+                if (remaining > 0) {
+                    return { 
+                        allowed: false, 
+                        remainingMinutes: Math.ceil(remaining / 60000) 
+                    };
                 }
                 return { allowed: true };
             } catch (err) {
@@ -112,7 +99,7 @@
             status.textContent = 'Sending WAKE UP...';
             
             try {
-                // 1. Send alert to ntfy.sh
+                // 1. Send to ntfy.sh
                 const ntfyRes = await fetch('https://ntfy.sh/maol_alert', {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
@@ -120,16 +107,19 @@
                 });
                 if (!ntfyRes.ok) throw new Error(`ntfy.sh failed: ${ntfyRes.status}`);
 
-                // 2. Update DB - WITH CHECK only enforces 12h cooldown, no other restrictions
-                const { error } = await sbClient
+                // 2. Update DB - WITH CHECK (true) makes .select() safe here
+                const { data, error } = await sbClient
                     .from('config')
                     .update({ last_alert_at: new Date().toISOString() })
-                    .eq('id', 1);
+                    .eq('id', 1)
+                    .select();
 
                 if (error) {
                     await updateButtonState();
                     throw new Error(`DB update failed: ${error.message}`);
                 }
+                
+                if (!data?.length) throw new Error('Update returned no data');
 
                 status.textContent = '✓ Global Alert Sent!';
                 status.style.color = '#66ff66';
