@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GLOBAL ALERT SYSTEM</title>
-    <!-- Import Supabase JS -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             min-height: 100vh;
             display: flex;
@@ -13,6 +15,7 @@
             background: #1a1a2e;
             font-family: 'Arial Black', Arial, sans-serif;
         }
+        .container { text-align: center; }
         .alert-button {
             width: 300px;
             height: 300px;
@@ -24,9 +27,10 @@
             font-weight: bold;
             cursor: pointer;
             box-shadow: 0 0 30px rgba(255, 0, 0, 0.6);
-            transition: all 0.2s;
+            transition: all 0.2s ease;
+            user-select: none;
         }
-        .alert-button:active { transform: scale(0.95); }
+        .alert-button:active:not(.disabled) { transform: scale(0.95); }
         .alert-button.disabled {
             background: #555;
             border-color: #777;
@@ -34,25 +38,29 @@
             cursor: not-allowed;
             opacity: 0.5;
         }
-        #status { margin-top: 20px; color: white; font-size: 18px; }
+        #status {
+            margin-top: 20px;
+            color: white;
+            font-size: 18px;
+            min-height: 24px;
+        }
     </style>
 </head>
 <body>
-    <div style="text-align: center;">
+    <div class="container">
         <button class="alert-button" id="alertBtn">ALERT</button>
         <div id="status">Loading...</div>
     </div>
 
     <script>
         // --- CONFIGURATION ---
-        const SUPABASE_URL = 'https://vvjreqxflpogiyyksoeb.supabase.co';
-        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ2anJlcXhmbHBvZ2l5eWtzb2ViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMzNDM4NDAsImV4cCI6MjEwODkxOTg0MH0.yvLdhuL2qyQwV5pGMTbNNQVSl1yzihAT2oMzJ2PEf8M';
+        const SUPABASE_URL = 'YOUR_SUPABASE_PROJECT_URL';
+        const SUPABASE_KEY = 'YOUR_SUPABASE_ANON_KEY';
         
-        // Initialize Supabase using the global 'supabase' object from the CDN
         const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
         const alertBtn = document.getElementById('alertBtn');
         const status = document.getElementById('status');
+        const COOLDOWN_MS = 12 * 60 * 60 * 1000; // 12 hours in milliseconds
 
         async function checkGlobalCooldown() {
             try {
@@ -63,22 +71,19 @@
                     .single();
 
                 if (error) throw error;
+                if (!data || !data.last_alert_at) return { allowed: true };
 
-                if (data && data.last_alert_at) {
-                    const lastSent = new Date(data.last_alert_at).getTime();
-                    const now = Date.now();
-                    const cooldownMs = 12 * 60 * 60 * 1000; // 12 Hours
-                    
-                    if (now - lastSent < cooldownMs) {
-                        const remainingMs = cooldownMs - (now - lastSent);
-                        const remainingMinutes = Math.ceil(remainingMs / (1000 * 60));
-                        return { allowed: false, remainingMinutes };
-                    }
+                const lastSent = new Date(data.last_alert_at).getTime();
+                const now = Date.now();
+                
+                if (now - lastSent < COOLDOWN_MS) {
+                    const remainingMinutes = Math.ceil((COOLDOWN_MS - (now - lastSent)) / (1000 * 60));
+                    return { allowed: false, remainingMinutes };
                 }
                 return { allowed: true };
             } catch (err) {
-                console.error(err);
-                return { allowed: true }; 
+                console.error('Cooldown check failed:', err);
+                return { allowed: true }; // Allow on DB error to prevent lockout
             }
         }
 
@@ -98,6 +103,7 @@
             return state.allowed;
         }
 
+        // Update timer every minute
         setInterval(updateButtonState, 60000);
         updateButtonState();
 
@@ -108,31 +114,29 @@
             status.textContent = 'Sending WAKE UP...';
             
             try {
-                // 1. Send to ntfy.sh
+                // 1. Send alert to ntfy.sh
                 const ntfyRes = await fetch('https://ntfy.sh/maol_alert', {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain' },
                     body: 'WAKE UP'
                 });
+                if (!ntfyRes.ok) throw new Error(`ntfy.sh failed: ${ntfyRes.status}`);
 
-                if (!ntfyRes.ok) throw new Error('ntfy failed');
-
-                // 2. Update database (RLS will block this if < 12 hours)
+                // 2. Update DB timestamp (NO .select() to avoid RLS validation issues)
                 const { error } = await sbClient
                     .from('config')
                     .update({ last_alert_at: new Date().toISOString() })
                     .eq('id', 1);
 
-                if (error) {
-                    throw new Error('Cooldown active (Database blocked update)');
-                }
+                if (error) throw new Error(`DB update failed: ${error.message}`);
 
                 status.textContent = '✓ Global Alert Sent!';
                 status.style.color = '#66ff66';
                 updateButtonState();
 
             } catch (err) {
-                status.textContent = '✗ Error: ' + err.message;
+                console.error('Alert failed:', err);
+                status.textContent = `✗ Error: ${err.message}`;
                 status.style.color = '#ff6666';
                 updateButtonState();
             }
